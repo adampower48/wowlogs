@@ -1,0 +1,11 @@
+class Dimension:
+    ROWS = "ROWS"
+    COLUMNS = "COLUMNS"
+    DIMENSION_UNSPECIFIED = ROWS
+
+
+class ValueInputOption:
+    RAW = "RAW"
+    USER_ENTERED = "USER_ENTERED"
+    INPUT_VALUE_OPTION_UNSPECIFIED = RAW
+
