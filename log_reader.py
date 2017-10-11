@@ -1,8 +1,9 @@
-import requests
 import json
-import helpers
+
+import requests
 from bs4 import BeautifulSoup
-import gsheets_helper
+
+import helpers
 
 '''
     Helper functions to parse log data into usable info
@@ -21,6 +22,7 @@ player_guild = "HEATHENS"
 # Temp report info
 report_code_temp = "FjdTC968vwxRaPMG"
 report_metric_temp = "healing"
+source_id_temp = "6"
 
 # Admin info
 API_KEY_WCLOGS = "9dbc4ede5797bd2399cacf1655735919"
@@ -274,7 +276,7 @@ def fight_to_stats(fight: dict, name: str = player_name) -> dict:
 def fight_to_spell_breakdown(fight: dict) -> list:
     USEFUL_STATS = ["name", "total", "uptime", "overheal", "uses", "tickCount", "critHitCount", "critTickCount"]
     _ft = fetch_fight_table(start=fight["start_time"], end=fight["end_time"],
-                            sourceid="6")  # todo: variable for sourceid
+                            sourceid=source_id_temp)  # todo: variable for sourceid
     fight_time = fight["end_time"] - fight["start_time"]
 
     spell_breakdown = []
@@ -338,86 +340,70 @@ def fetch_wowanalyzer_log(url, fight_id):
     soup = BeautifulSoup(page.content, "html.parser")
 
 
-# Temporary code todo: clean up and relocate reading and parsing code
-if __name__ == "__main__":
-    # Fetch data #
-    urls = create_urls(username=user_name, character_name=player_name, character_guild=player_guild,
-                       character_server=player_server, character_region=player_region, report_code=report_code_temp,
-                       report_metric=report_metric_temp)
-    # static info
-    zones = read_zones()
-    classes = read_classes()
+def get_player_log(fight, report_code, player_id=source_id_temp):
+    log = dict()
+    fight_duration = (fight["end_time"] - fight["start_time"]) // 1000
+    log["fight_length_mins"] = fight_duration // 60
+    log["fight_length_secs"] = fight_duration % 60
 
-    # Dynamic play/guild info
+    # log["mana_remaining"] This will take a hell of a lot of work
 
-    user_reports = read_user_reports(url=urls["user_logs"]) if "user_logs" in urls else []
-    guild_reports = read_guild_reports(url=urls["guild_logs"]) if "guild_logs" in urls else []
+    damage_taken_table = fetch_fight_table(report_code, report_metric="damage-taken", start=fight["start_time"],
+                                           end=fight["end_time"], sourceid=player_id)
+    total_damage_taken = sum(s["total"] for s in damage_taken_table["entries"])
+    log["absorbless_DTPS"] = total_damage_taken // fight_duration
 
-    # Print data
-    # print(*zones, sep="\n")
-    #
-    # print()
-    # print(*classes, sep="\n")
+    ability_casts_table = fetch_fight_table(report_code, report_metric="casts", start=fight["start_time"],
+                                            end=fight["end_time"], sourceid=player_id)
+    log["TFT_casts"] = next(s for s in ability_casts_table["entries"] if s["name"] == "Thunder Focus Tea")["total"]
 
-    print()
-    print(*[r for r in user_reports if r["zone"] == 13], sep="\n")
+    # log["TFT_effuse"]             ----\
+    # log["TFT_enveloping_mist"]        |
+    # log["TFT_essence_font"]           |   These will be difficult
+    # log["TFT_renewing_mist"]          |
+    # log["TFT_vivify"]             ----/
 
-    print()
-    print(*[r for r in guild_reports if r["zone"] == 13 and r["owner"] == user_name], sep="\n")
+    auras_table = fetch_fight_table(report_code, report_metric="buffs", start=fight["start_time"],
+                                    end=fight["end_time"], source=player_id, options=2)
+    log["UT_procs"] = next(a for a in auras_table["auras"] if a["name"] == "Uplifting Trance")["totalUses"]
 
-    print()
-    fights = fetch_fight_info()
-    print("FIGHTS:", *fights, sep="\n")
-    print()
+    # log["unused_UT_procs"]    Difficult
+    # log["mana_tea_MP5"]       Difficult
 
-    # print()
-    # fight = fetch_fight_table(start=fights[0]["start_time"], end=fights[0]["end_time"])
-    # print("FIGHT ENTRIES:", *sorted(fight["entries"], key=lambda p: p["id"]), sep="\n")
+    # log["lifecycles_EM"]      TODO: Fill in the rest of these stats
+    # log["lifecycles_vivify"]
 
-    # print()
-    # player_fight_data = [x for x in fight["entries"] if x["name"].lower() == player_name][0]
-    # print("PLAYER FIGHT DATA:", *["{}: {}".format(k, v) for k, v in player_fight_data.items()], sep="\n")
-    #
-    # print()
-    # print("Name:", player_fight_data["name"])
-    # print("Class:", player_fight_data["icon"])
-    # print("Dps:", player_fight_data["total"] // (player_fight_data["activeTime"] // 1000))
-    # # print(*player_fight_data["gear"], sep="\n")
+    # log["SotC_mana_return"]
 
-    # print()
-    # start_events = fetch_player_stats(start=fights[0]["start_time"], end=fights[0]["start_time"] + 1)
-    # initial_player_data = [x for x in start_events["events"] if x["type"] == "combatantinfo"]
-    # print("PLAYER DATA:", *sorted(initial_player_data, key=lambda p: p["sourceID"]), sep="\n")
+    # log["avg_SG_stacks"]
 
-    # Link player stats to player
-    # player_stats_event = [x for x in initial_player_data if x["sourceID"] == player_fight_data["id"]][0]
-    # print()
-    # print("PLAYER STATS:", *["{}: {}".format(k, v) for k, v in parse_stats_from_event(player_stats_event).items()],
-    #       sep="\n")  # only required stats
-    # print("PLAYER STATS:", *["{}: {}".format(k, v) for k, v in player_stats_event.items()], sep="\n")  # all stats
+    # log["effective_WoS_%"]
 
-    for f in fights[0:1]:
-        print(f["name"])
-        ft = fetch_fight_table(start=f["start_time"], end=f["end_time"], sourceid="6")
-        ft["entries"].sort(key=lambda x: x["total"], reverse=True)
-        # print(*["{}: {}".format(k, v) for k, v in ft["entries"][0].items()], sep="\n")
-        # print(*sorted(ft["entries"], key=lambda x: x["total"], reverse=True), sep="\n")
-        stats = fight_to_stats(f)
-        print(helpers.print_dict(stats))
-        print()
+    # log["targets_per_celestrial_breath"]
 
-        print("SPELL BREAKDOWN:")
-        bd = fight_to_spell_breakdown(f)
-        print(*bd, sep="\n")
-        print()
+    # log["TMoS_procs"]
+    # log["targets_per_TMoS"]
 
-        vals = spell_breakdown_to_value_array(bd)
-        print(*vals, sep="\n")
+    # log["effective_RJW_%"]
 
-        # Spell breakdown
-        # gsheets_helper.update_cells("1-xuSFM6xgMFxgC_r_nca7WQ1UyTSJIghwPw_Ncj__vE", "Player Log!D14:L43", vals)
+    # log["dancing_mist_healing"]
 
-        # Player log from wowanalyzer
-        player_log_data = fetch_wowanalyzer_log(urls["wowanalyzer"], f["id"])
+    # log["mastery_per_EF"]
 
-        print()
+    # log["targets_per_EF"]
+    # log["targets_per_chi_burst"]
+
+    # log["misc_MP5"]
+    # log["misc_HP5"]
+
+    # log["T20_2pc_MP5"]
+    # log["T20_4pc_uptime"]
+
+    # log["concordance_uptime"]
+
+    # log["first_NLC_trait"]
+    # log["second_NLC_trait"]
+    # log["third_NLC_trait"]
+
+
+    return log
